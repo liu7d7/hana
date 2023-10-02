@@ -293,6 +293,10 @@ pub fn gl_enable(cap: u32) {
   unsafe { gl::Enable(cap); }
 }
 
+pub fn gl_blend_func(src: u32, dst: u32) {
+  unsafe { gl::BlendFunc(src, dst) }
+}
+
 pub fn gl_disable(cap: u32) {
   unsafe { gl::Disable(cap); }
 }
