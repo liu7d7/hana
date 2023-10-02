@@ -30,7 +30,7 @@ fn main() -> Result<(), String> {
   win.set_mouse_button_polling(true);
   win.set_size_polling(true);
   win.set_key_polling(true);
-  glfw.set_swap_interval(SwapInterval::None);
+  // glfw.set_swap_interval(SwapInterval::None);
 
   gl::load_with(|s| win.get_proc_address(s) as *const _);
   glfw.make_context_current(Some(&win));
@@ -58,11 +58,6 @@ fn main() -> Result<(), String> {
       (gl::COLOR_ATTACHMENT1, TexSpec::rgba16_linear(width * 2, height * 2)), // NORM
       (gl::COLOR_ATTACHMENT2, TexSpec::rgba8_linear(width * 2, height * 2)), // COLOR
       (gl::DEPTH_ATTACHMENT, TexSpec::depth24_nearest(width * 2, height * 2)), // DEPTH
-    ]);
-
-  let mut m_buf =
-    gl_make_fbo(&[
-      (gl::COLOR_ATTACHMENT0, TexSpec::rgba8_linear(width, height)),
     ]);
 
   let girl = load_model("res/model/girl.obj")?;
@@ -133,14 +128,14 @@ fn main() -> Result<(), String> {
     gl_uniform_3f("u_eye", &cam.eye(tick_delta));
     let light_poses = [
       Vec3 {
-        x: (glfw.get_time() * 0.25 + 1.0).sin() as f32 * 5.,
-        y: (glfw.get_time() * 0.25 + 1.2).sin() as f32 * 10. + 10.,
-        z: (glfw.get_time() * 0.25 + 1.4).sin() as f32 * 10. + 10.,
+        x: (glfw.get_time() * 0.5 + 1.0).sin() as f32 * 5.,
+        y: (glfw.get_time() * 0.5 + 1.2).sin() as f32 * 10. + 10.,
+        z: (glfw.get_time() * 0.5 + 1.4).sin() as f32 * 10. + 10.,
       },
       Vec3 {
-        x: (glfw.get_time() * 0.25 + 1.25).sin() as f32 * 5.,
-        y: (glfw.get_time() * 0.25 + 1.45).sin() as f32 * 10. + 10.,
-        z: (glfw.get_time() * 0.25 + 1.65).sin() as f32 * 10. + 10.,
+        x: (glfw.get_time() * 0.5 + 1.25).sin() as f32 * 5.,
+        y: (glfw.get_time() * 0.5 + 1.45).sin() as f32 * 10. + 10.,
+        z: (glfw.get_time() * 0.5 + 1.65).sin() as f32 * 10. + 10.,
       },
     ];
 
@@ -164,18 +159,6 @@ fn main() -> Result<(), String> {
     gl_bind_vao(&p_vao);
     gl_draw_arrays(gl::TRIANGLES, 6);
 
-    gl_disable(gl::DEPTH_TEST);
-    gl_enable(gl::BLEND);
-    gl_blend_func(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
-    gl_bind_sh(&motion_blur);
-    gl_bind_tex(gl_fbo_tex(&m_buf, gl::COLOR_ATTACHMENT0), gl::TEXTURE0);
-    gl_uniform_1i("u_tex", 0);
-    gl_bind_vao(&p_vao);
-    gl_draw_arrays(gl::TRIANGLES, 6);
-
-    gl_blit_fbo(&win.fbo0(), &m_buf, gl::COLOR_ATTACHMENT0, gl::COLOR_ATTACHMENT0, gl::LINEAR);
-
-    gl_bind_fbo(&win.fbo0());
     win.swap_buffers();
 
     glfw.poll_events();
@@ -205,13 +188,6 @@ fn main() -> Result<(), String> {
             &[gl::COLOR_ATTACHMENT0, gl::COLOR_ATTACHMENT1, gl::COLOR_ATTACHMENT2, gl::DEPTH_ATTACHMENT],
             new_width * 2,
             new_height * 2
-          );
-
-          gl_resize_fbo_attachments(
-            &mut m_buf,
-            &[gl::COLOR_ATTACHMENT0],
-            new_width,
-            new_height
           );
         }
         WindowEvent::MouseButton(MouseButton::Button1, Action::Press, _) => {
