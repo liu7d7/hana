@@ -16,15 +16,19 @@ uniform int u_n_lights;
 
 uniform vec3 u_eye;
 
+uniform sampler2D s_input;
+uniform bool ssao_on;
+
 void main() {
   vec3 f_pos = texture(f_pos, v_uv).rgb;
   vec3 f_norm = texture(f_norm, v_uv).rgb;
   vec4 f_tint_full = texture(f_tint, v_uv);
   vec3 f_tint = f_tint_full.rgb;
   float f_spec = 1. / f_tint_full.a;
+  float s_ao = texture(s_input, v_uv).r;
 
   const float ambient_strength = 0.5;
-  vec3 ambient = ambient_strength * f_tint;
+  vec3 ambient = ssao_on ? ambient_strength * s_ao * f_tint : ambient_strength * f_tint;
 
   vec3 diffuse = vec3(0.);
   vec3 specular = vec3(0.);

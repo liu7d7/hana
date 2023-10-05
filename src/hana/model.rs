@@ -2,15 +2,26 @@ use std::iter::zip;
 use std::ops::Deref;
 use glam::{Vec3, Vec4};
 use russimp::scene::{PostProcess, Scene};
-use crate::hana::assimpu::ScuffedInto;
-use crate::hana::glu::{Buf, FLOAT_3, FLOAT_4, gl_buf_data, gl_make_vi, Vao};
+use crate::hana::cvt::ScuffedInto;
+use crate::hana::glu::{Buf, FLOAT_3, FLOAT_4, gl_gen_vi, Vao};
 
 #[repr(packed(4))]
+#[derive(Clone)]
 pub struct Vertex {
   pub pos: Vec3,
   pub norm: Vec3,
   pub tint: Vec4,
   // tex: Vec2,
+}
+
+impl Vertex {
+  pub fn empty() -> Vertex {
+    Vertex {
+      pos: Vec3::ZERO,
+      norm: Vec3::ZERO,
+      tint: Vec4::ONE
+    }
+  }
 }
 
 pub struct Mesh {
@@ -24,13 +35,13 @@ impl Mesh {
     let res = Mesh {
       vertices,
       indices,
-      gl: gl_make_vi(&[FLOAT_3, FLOAT_3, FLOAT_4])
+      gl: gl_gen_vi(&[FLOAT_3, FLOAT_3, FLOAT_4])
     };
 
     let (_, vbo, ibo) = &res.gl;
 
-    gl_buf_data(vbo, gl::DYNAMIC_DRAW, res.vertices.as_slice());
-    gl_buf_data(ibo, gl::DYNAMIC_DRAW, res.indices.as_slice());
+    vbo.data(gl::DYNAMIC_DRAW, res.vertices.as_slice());
+    ibo.data(gl::DYNAMIC_DRAW, res.indices.as_slice());
 
     res
   }
@@ -38,22 +49,24 @@ impl Mesh {
 
 pub struct Model(pub Vec<Mesh>);
 
-pub fn load_model(path: &str) -> Result<Model, String> {
-  let scene =
-    Scene::
+impl Model {
+  pub fn new(path: &str) -> Result<Model, String> {
+    let scene =
+      Scene::
       from_file(path, vec![PostProcess::Triangulate, PostProcess::GenerateNormals])
-      .map_err(|e| e.to_string())?;
-  if let None = scene.root {
-    return Err("Failed to load model!".into())
+        .map_err(|e| e.to_string())?;
+    if let None = scene.root {
+      return Err("Failed to load model!".into())
+    }
+
+    let root = scene.root.as_deref().unwrap();
+
+    let res = Model(cvt_node(&root, &scene));
+    Ok(res)
   }
-
-  let root = scene.root.as_deref().unwrap();
-
-  let res = Model(cvt_node(&root, &scene));
-  Ok(res)
 }
 
-pub fn cvt_node(root: &russimp::node::Node, scene: &Scene) -> Vec<Mesh> {
+fn cvt_node(root: &russimp::node::Node, scene: &Scene) -> Vec<Mesh> {
   let mut res = Vec::new();
   for mesh in &root.meshes {
     res.push(cvt_mesh(&scene.meshes[*mesh as usize]));
@@ -66,7 +79,7 @@ pub fn cvt_node(root: &russimp::node::Node, scene: &Scene) -> Vec<Mesh> {
   res
 }
 
-pub fn cvt_mesh(mesh: &russimp::mesh::Mesh) -> Mesh {
+fn cvt_mesh(mesh: &russimp::mesh::Mesh) -> Mesh {
   let mut vertices = Vec::new();
   let mut indices = Vec::new();
 
