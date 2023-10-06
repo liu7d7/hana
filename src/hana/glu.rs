@@ -73,17 +73,24 @@ impl Shader {
       None
     };
 
-    Self::gen(vert_src.as_str(), frag_src.as_str(), geom_src)
+    Self::gen(vert_src.as_str(), vert, frag_src.as_str(), frag, geom_src, geom)
   }
 
-  pub fn gen(vert_src: &str, frag_src: &str, geom_src: Option<String>) -> Result<Shader, String> {
+  pub fn gen(
+    vert_src: &str,
+    vert_path: &'static str,
+    frag_src: &str,
+    frag_path: &'static str,
+    geom_src: Option<String>,
+    geom_path: Option<&'static str>
+  ) -> Result<Shader, String> {
     unsafe {
       let prog = gl::CreateProgram();
 
-      gl_attach_shader(prog, vert_src, gl::VERTEX_SHADER)?;
-      gl_attach_shader(prog, frag_src, gl::FRAGMENT_SHADER)?;
+      gl_attach_shader(prog, vert_src, vert_path, gl::VERTEX_SHADER)?;
+      gl_attach_shader(prog, frag_src, frag_path, gl::FRAGMENT_SHADER)?;
       if let Some(geom_src) = geom_src {
-        gl_attach_shader(prog, geom_src.as_str(), gl::GEOMETRY_SHADER)?;
+        gl_attach_shader(prog, geom_src.as_str(), geom_path.unwrap(), gl::GEOMETRY_SHADER)?;
       }
 
       gl::LinkProgram(prog);
@@ -99,17 +106,22 @@ impl Shader {
         let mut count = 0;
         gl::GetActiveUniform(prog, i as u32, 256, addr_of_mut!(len), addr_of_mut!(count), addr_of_mut!(ty), chars.as_mut_ptr());
 
-        let name = CStr::from_ptr(chars.as_ptr()).to_str().map_err(|e| e.to_string())?.to_string();
+        let mut name = CStr::from_ptr(chars.as_ptr()).to_str().map_err(|e| e.to_string())?.to_string();
         let loc = gl::GetUniformLocation(prog, chars.as_ptr());
+        if &name[name.len() - 3..] == "[0]" {
+          name = name[..name.len() - 3].to_string();
+        }
 
         uniforms.insert(name, loc);
       }
+
+      println!("{:?}", uniforms);
 
       Ok(Shader { id: prog, uniforms })
     }
   }
 
-  pub fn uniform_1f(&self, name: &'static str, val: f32) {
+  pub fn set_1f(&self, name: &'static str, val: f32) {
     if self.uniforms.contains_key(name) {
       unsafe {
         gl::Uniform1f(self.uniforms[name], val);
@@ -120,7 +132,7 @@ impl Shader {
     panic!("uniform {} not found", name);
   }
 
-  pub fn uniform_2f(&self, name: &'static str, val: &Vec2) {
+  pub fn set_2f(&self, name: &'static str, val: &Vec2) {
     if self.uniforms.contains_key(name) {
       unsafe {
         gl::Uniform2f(self.uniforms[name], val.x, val.y);
@@ -131,7 +143,7 @@ impl Shader {
     panic!("uniform {} not found", name);
   }
 
-  pub fn uniform_3f(&self, name: &'static str, val: &Vec3) {
+  pub fn set_3f(&self, name: &'static str, val: &Vec3) {
     if self.uniforms.contains_key(name) {
       unsafe {
         gl::Uniform3f(self.uniforms[name], val.x, val.y, val.z);
@@ -142,7 +154,7 @@ impl Shader {
     panic!("uniform {} not found", name);
   }
 
-  pub fn uniform_3fv(&self, name: &'static str, val: &[Vec3]) {
+  pub fn set_3fv(&self, name: &'static str, val: &[Vec3]) {
     if self.uniforms.contains_key(name) {
       unsafe {
         gl::Uniform3fv(self.uniforms[name], val.len() as i32, addr_of!(val[0].x));
@@ -153,7 +165,18 @@ impl Shader {
     panic!("uniform {} not found", name);
   }
 
-  pub fn uniform_4f(&self, name: &'static str, val: &Vec4) {
+  pub fn set_1fv(&self, name: &'static str, val: &[f32]) {
+    if self.uniforms.contains_key(name) {
+      unsafe {
+        gl::Uniform1fv(self.uniforms[name], val.len() as i32, addr_of!(val[0]));
+      }
+      return;
+    }
+
+    panic!("uniform {} not found", name);
+  }
+
+  pub fn set_4f(&self, name: &'static str, val: &Vec4) {
     if self.uniforms.contains_key(name) {
       unsafe {
         gl::Uniform4f(self.uniforms[name], val.x, val.y, val.z, val.w);
@@ -164,7 +187,7 @@ impl Shader {
     panic!("uniform {} not found", name);
   }
 
-  pub fn uniform_1i(&self, name: &'static str, val: i32) {
+  pub fn set_1i(&self, name: &'static str, val: i32) {
     if self.uniforms.contains_key(name) {
       unsafe {
         gl::Uniform1i(self.uniforms[name], val);
@@ -175,7 +198,7 @@ impl Shader {
     panic!("uniform {} not found", name);
   }
 
-  pub fn uniform_mat4(&self, name: &'static str, val: &Mat4) {
+  pub fn set_mat4(&self, name: &'static str, val: &Mat4) {
     if self.uniforms.contains_key(name) {
       unsafe {
         gl::UniformMatrix4fv(self.uniforms[name], 1, gl::FALSE, val.as_ref().as_ptr());
@@ -336,6 +359,26 @@ impl TexSpec {
     }
   }
 
+  pub fn rg8_linear(width: i32, height: i32) -> TexSpec {
+    TexSpec {
+      min_filter: gl::LINEAR,
+      mag_filter: gl::LINEAR,
+      ..Self::rg8_nearest(width, height)
+    }
+  }
+
+  pub fn rg8_nearest(width: i32, height: i32) -> TexSpec {
+    TexSpec {
+      width,
+      height,
+      internal_format: gl::RG8I,
+      format: gl::RED,
+      min_filter: gl::NEAREST,
+      mag_filter: gl::NEAREST,
+      pixels: None,
+    }
+  }
+
   pub fn depth24_nearest(width: i32, height: i32) -> TexSpec {
     TexSpec {
       width,
@@ -487,11 +530,11 @@ unsafe fn gl_select_attribs(attribs: &[(i32, bool)], vao: &Vao) {
   }
 }
 
-fn gl_attach_shader(prog: u32, src: &str, kind: u32) -> Result<u32, String> {
+fn gl_attach_shader(prog: u32, src: &str, path: &'static str, kind: u32) -> Result<u32, String> {
   let sh = unsafe { gl::CreateShader(kind) };
   gl_shader_source(sh, src);
   unsafe { gl::CompileShader(sh) };
-  gl_check_compile(sh)?;
+  gl_check_compile(sh).map_err(|it| path.to_string() + " at " + &*it)?;
   unsafe { gl::AttachShader(prog, sh) };
   unsafe { gl::DeleteShader(sh) };
   Ok(sh)

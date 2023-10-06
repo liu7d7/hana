@@ -9,6 +9,7 @@ use rand::Rng;
 use crate::hana::camera::Camera;
 use crate::hana::glu::*;
 use crate::hana::model::{Model};
+use crate::hana::palette::{Color, hex_to_vec3};
 
 mod hana;
 
@@ -42,12 +43,21 @@ fn main() -> Result<(), String> {
   gl_depth_func(gl::LESS);
   gl_enable(gl::DEPTH_TEST);
 
+  // palette
+  let palette = [
+    hex_to_vec3(0x66ffe3), hex_to_vec3(0x4da6ff), hex_to_vec3(0x4b5bab), hex_to_vec3(0x473b78), // blue
+    hex_to_vec3(0xcfff70), hex_to_vec3(0x8fde5d), hex_to_vec3(0x3ca370), hex_to_vec3(0x3d6e70), // green
+    hex_to_vec3(0xffe478), hex_to_vec3(0xf2a65e), hex_to_vec3(0xba6156), hex_to_vec3(0x8c3f5d), // yellow
+    hex_to_vec3(0xffb570), hex_to_vec3(0xff9166), hex_to_vec3(0xeb564b), hex_to_vec3(0xb0305c), // orange
+    hex_to_vec3(0xff6b97), hex_to_vec3(0xbd4882), hex_to_vec3(0x80366b), hex_to_vec3(0x5a265e), // pink
+    hex_to_vec3(0xffffeb), hex_to_vec3(0xc2c2d1), hex_to_vec3(0x7e7e8f), hex_to_vec3(0x606070), // white
+  ];
+
   // shaders
-  let defer = Shader::new("res/shader/model.vert", "res/shader/g_buffer.frag", None)?;
-  let fin = Shader::new("res/shader/postprocess.vert", "res/shader/final.frag", None)?;
+  let defer = Shader::new("res/shader/model.vert", "res/shader/g_buffer_cel.frag", None)?;
+  let fin = Shader::new("res/shader/postprocess.vert", "res/shader/final_cel.frag", None)?;
   let blit = Shader::new("res/shader/postprocess.vert", "res/shader/blit.frag", None)?;
-  let ssao = Shader::new("res/shader/postprocess.vert", "res/shader/ssao.frag", None)?;
-  let blur = Shader::new("res/shader/postprocess.vert", "res/shader/ssao_blur.frag", None)?;
+  let cel = Shader::new("res/shader/postprocess.vert", "res/shader/cel.frag", None)?;
 
   // camera
   let mut cam = Camera::new();
@@ -63,8 +73,13 @@ fn main() -> Result<(), String> {
     Fbo::new(&[
       (gl::COLOR_ATTACHMENT0, TexSpec::rgba16_linear(width * 2, height * 2)), // POS
       (gl::COLOR_ATTACHMENT1, TexSpec::rgba16_linear(width * 2, height * 2)), // NORM
-      (gl::COLOR_ATTACHMENT2, TexSpec::rgba8_linear(width * 2, height * 2)), // COLOR
+      (gl::COLOR_ATTACHMENT2, TexSpec::rg8_nearest(width * 2, height * 2)), // COLOR
       (gl::DEPTH_ATTACHMENT, TexSpec::depth24_nearest(width * 2, height * 2)), // DEPTH
+    ]);
+
+  let mut c_buf =
+    Fbo::new(&[
+      (gl::COLOR_ATTACHMENT0, TexSpec::rgba8_linear(width * 2, height * 2))
     ]);
 
   // character model
@@ -84,43 +99,8 @@ fn main() -> Result<(), String> {
     ]
   );
 
-  // ssao kernel sample values
-  let mut rng = rand::thread_rng();
-  let mut ssao_kernel = [Vec3::ZERO; 64];
-  for i in 0..ssao_kernel.len() {
-    let mut scale = i as f32 / 64.;
-    scale = 0.1 + scale * scale * 0.9;
-
-    ssao_kernel[i] =
-      Vec3::new(
-        rng.gen_range(-1., 1.),
-        rng.gen_range(-1., 1.),
-        rng.gen_range(0., 1.)
-      ).normalize() * scale;
-  }
-
-  let mut ssao_noise = [Vec3::ZERO; 64];
-  for i in 0..ssao_noise.len() {
-    ssao_noise[i] =
-      Vec3::new(
-        rng.gen_range(-1., 1.),
-        rng.gen_range(-1., 1.),
-        0.
-      );
-  }
-
-  let s_noise = Tex::new(&TexSpec::rgba16_nearest(8, 8));
-  s_noise.data(ssao_noise.as_slice(), 8, 8, gl::RGB, gl::FLOAT);
-  let mut s_buf = Fbo::new(&[
-    (gl::COLOR_ATTACHMENT0, TexSpec::r16f_nearest(width, height))
-  ]);
-  let mut b_buf = Fbo::new(&[
-    (gl::COLOR_ATTACHMENT0, TexSpec::r16f_nearest(width, height))
-  ]);
-
   // define tick delta
   let mut tick_delta = 0.;
-  let mut ssao_on = true;
 
   while !win.should_close() {
     // TODO: refactor all of this
@@ -160,8 +140,9 @@ fn main() -> Result<(), String> {
     gl_clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
 
     defer.bind();
-    defer.uniform_mat4("u_proj", &cam.proj(width as f32 / height as f32));
-    defer.uniform_mat4("u_look", &cam.look_at(tick_delta));
+    defer.set_mat4("u_proj", &cam.proj(width as f32 / height as f32));
+    defer.set_mat4("u_look", &cam.look_at(tick_delta));
+    defer.set_1i("tint", 5);
 
     for mesh in &hana.0 {
       let (vao, ..) = &mesh.gl;
@@ -170,80 +151,30 @@ fn main() -> Result<(), String> {
     }
     // end g buffer pass
 
-    // begin ssao pass
-    gl_viewport(width, height);
-    s_buf.bind();
-    gl_clear(gl::COLOR_BUFFER_BIT);
-    ssao.bind();
-    g_buf.tex_at(gl::COLOR_ATTACHMENT0).bind(gl::TEXTURE0);
-    ssao.uniform_1i("f_pos", 0);
-    g_buf.tex_at(gl::COLOR_ATTACHMENT1).bind(gl::TEXTURE1);
-    ssao.uniform_1i("f_norm", 1);
-    s_noise.bind(gl::TEXTURE2);
-    ssao.uniform_1i("u_noise", 2);
-    ssao.uniform_3fv("u_samples[0]", &ssao_kernel);
-    ssao.uniform_mat4("projection", &cam.proj(width as f32 / height as f32));
-    p_vao.bind();
-    gl_draw_arrays(gl::TRIANGLES, 6);
-    // end ssao pass
-
-    // begin ssao blur pass
-    b_buf.bind();
-    blur.bind();
-    blur.uniform_2f("u_input_size", &Vec2::new(width as f32, height as f32));
-    gl_clear(gl::COLOR_BUFFER_BIT);
-    s_buf.tex_at(gl::COLOR_ATTACHMENT0).bind(gl::TEXTURE0);
-    p_vao.bind();
-    gl_draw_arrays(gl::TRIANGLES, 6);
-    // end ssao blur pass
-
     // begin lighting pass
     gl_viewport(width * 2, height * 2);
     f_buf.bind();
     gl_clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
     fin.bind();
     g_buf.tex_at(gl::COLOR_ATTACHMENT0).bind(gl::TEXTURE0);
-    fin.uniform_1i("f_pos", 0);
+    fin.set_1i("f_pos", 0);
     g_buf.tex_at(gl::COLOR_ATTACHMENT1).bind(gl::TEXTURE1);
-    fin.uniform_1i("f_norm", 1);
+    fin.set_1i("f_norm", 1);
     g_buf.tex_at(gl::COLOR_ATTACHMENT2).bind(gl::TEXTURE2);
-    fin.uniform_1i("f_tint", 2);
-    b_buf.tex_at(gl::COLOR_ATTACHMENT0).bind(gl::TEXTURE3);
-    fin.uniform_1i("s_input", 3);
-    fin.uniform_3f("u_eye", &cam.eye(tick_delta));
-    fin.uniform_1i("ssao_on", (if ssao_on { gl::TRUE } else { gl::FALSE }) as i32);
-    let light_poses = [
-      Vec3 {
-        x: (glfw.get_time() * 0.01 + 1.0).sin() as f32 * 30.,
-        y: (glfw.get_time() * 0.01 + 1.2).sin() as f32 * 30. + 10.,
-        z: (glfw.get_time() * 0.01 + 1.4).sin() as f32 * 30. + 10.,
-      },
-      Vec3 {
-        x: (glfw.get_time() * 0.01 + 1.6).cos() as f32 * 30.,
-        y: (glfw.get_time() * 0.01 + 1.8).cos() as f32 * 30. + 10.,
-        z: (glfw.get_time() * 0.01 + 2.0).cos() as f32 * 30. + 10.,
-      },
-    ];
-
-    let light_colors = [
-      Vec3::new(0.25, 1., 1.),
-      Vec3::new(1., 0.25, 1.)
-    ];
-
-    fin.uniform_3fv("u_light_positions[0]", &light_poses);
-    fin.uniform_3fv("u_light_colors[0]", &light_colors);
-    fin.uniform_1i("u_n_lights", 2);
+    fin.set_1i("f_tint", 2);
+    fin.set_3f("u_eye", &cam.eye(tick_delta));
+    fin.set_3fv("palette", &palette);
     p_vao.bind();
     gl_draw_arrays(gl::TRIANGLES, 6);
     // end lighting pass
 
-    // begin blitting to backbuffer
+    // begin blitting to backbuffer with cel shading
     gl_viewport(width, height);
     win.fbo0().bind();
     gl_clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
     blit.bind();
     f_buf.tex_at(gl::COLOR_ATTACHMENT0).bind(gl::TEXTURE0);
-    blit.uniform_1i("u_tex", 0);
+    cel.set_1i("u_tex", 0);
     p_vao.bind();
     gl_draw_arrays(gl::TRIANGLES, 6);
     // end blitting to backbuffer
@@ -260,9 +191,6 @@ fn main() -> Result<(), String> {
         WindowEvent::Key(Key::Escape, _, Action::Press, _) => {
           FIRST_MOUSE.store(true, Ordering::Relaxed);
           win.set_cursor_mode(CursorMode::Normal);
-        }
-        WindowEvent::Key(Key::O, _, Action::Press, _) => {
-          ssao_on = !ssao_on;
         }
         WindowEvent::Size(new_width, new_height) => {
           width = new_width;
